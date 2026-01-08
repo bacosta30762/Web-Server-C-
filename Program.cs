@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 
 class HttpRequest
 {
@@ -39,7 +40,7 @@ class Program
                 TcpClient client = listener.AcceptTcpClient();
                 Console.WriteLine($"{DateTime.Now}: Client connected from {client.Client.RemoteEndPoint}");
 
-                HandleClient(client, root);
+                ThreadPool.QueueUserWorkItem(state => HandleClient(client, root));
             }
             catch (SocketException)
             {
