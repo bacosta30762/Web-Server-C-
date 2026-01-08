@@ -14,6 +14,7 @@ class HttpRequest
     public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public string Body { get; set; } = string.Empty;
     public Dictionary<string, string> FormData { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> Cookies { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 class Server
@@ -500,26 +501,63 @@ class Server
                 string headerName = lines[i].Substring(0, colonIndex).Trim();
                 string headerValue = lines[i].Substring(colonIndex + 1).Trim();
                 request.Headers[headerName] = headerValue;
+
+                if (headerName.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+                {
+                    ParseCookies(request, headerValue);
+                }
             }
         }
 
         return request;
     }
 
-    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body)
+    private static void ParseCookies(HttpRequest request, string cookieHeader)
     {
-        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
-        SendResponse(stream, statusCode, statusMessage, headers, bodyBytes);
+        string[] cookies = cookieHeader.Split(';');
+        foreach (string cookie in cookies)
+        {
+            string trimmed = cookie.Trim();
+            int equalsIndex = trimmed.IndexOf('=');
+            if (equalsIndex > 0)
+            {
+                string name = trimmed.Substring(0, equalsIndex).Trim();
+                string value = trimmed.Substring(equalsIndex + 1).Trim();
+                request.Cookies[name] = value;
+            }
+        }
     }
 
-    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, byte[] body)
+    private static string BuildSetCookieHeader(string name, string value, int maxAge = 3600, string path = "/", bool httpOnly = true)
+    {
+        return $"{name}={value}; Path={path}; Max-Age={maxAge}; HttpOnly";
+    }
+
+    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body, List<string>? cookies = null)
+    {
+        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+        SendResponse(stream, statusCode, statusMessage, headers, bodyBytes, cookies);
+    }
+
+    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, byte[] body, List<string>? cookies = null)
     {
         StringBuilder responseBuilder = new StringBuilder();
         responseBuilder.Append($"HTTP/1.1 {statusCode} {statusMessage}\r\n");
 
         foreach (var header in headers)
         {
-            responseBuilder.Append($"{header.Key}: {header.Value}\r\n");
+            if (!header.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                responseBuilder.Append($"{header.Key}: {header.Value}\r\n");
+            }
+        }
+
+        if (cookies != null)
+        {
+            foreach (string cookie in cookies)
+            {
+                responseBuilder.Append($"Set-Cookie: {cookie}\r\n");
+            }
         }
 
         responseBuilder.Append("\r\n");
