@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 
 class Program
 {
@@ -11,10 +13,9 @@ class Program
     {
         string root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 
-        HttpListener listener = new HttpListener();
-        listener.Prefixes.Add("http://localhost:8080/");
+        TcpListener listener = new TcpListener(IPAddress.Any, 8080);
         listener.Start();
-        Console.WriteLine("Listening for connections on http://localhost:8080/");
+        Console.WriteLine("Listening for connections on port 8080...");
 
         Console.CancelKeyPress += (sender, eventArgs) =>
         {
@@ -25,95 +26,55 @@ class Program
 
         while (running)
         {
-            HttpListenerContext? context = null;
-
             try
             {
-                context = listener.GetContext();
+                TcpClient client = listener.AcceptTcpClient();
+                Console.WriteLine($"{DateTime.Now}: Client connected from {client.Client.RemoteEndPoint}");
+
+                HandleClient(client, root);
             }
-            catch (HttpListenerException)
+            catch (SocketException)
             {
                 if (!running)
                 {
                     break;
                 }
-
                 throw;
             }
-
-            HttpListenerRequest request = context.Request;
-            HttpListenerResponse response = context.Response;
-
-            Console.WriteLine($"{DateTime.Now}: Received request for {request.Url}");
-
-            try
-            {
-                if (TryServeFile(root, request, response))
-                {
-                    response.OutputStream.Close();
-                    continue;
-                }
-
-                string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
-                byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
-                response.ContentLength64 = buffer.Length;
-                Stream output = response.OutputStream;
-                output.Write(buffer, 0, buffer.Length);
-                output.Close();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error handling request: {ex.Message}");
-
-                if (!response.OutputStream.CanWrite)
-                {
-                    continue;
-                }
-
-                response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                byte[] buffer = System.Text.Encoding.UTF8.GetBytes("<html><body><h1>500 - Internal Server Error</h1></body></html>");
-                response.ContentLength64 = buffer.Length;
-                response.OutputStream.Write(buffer, 0, buffer.Length);
-                response.OutputStream.Close();
-            }
         }
 
-        listener.Close();
+        listener.Stop();
     }
 
-    static bool TryServeFile(string root, HttpListenerRequest request, HttpListenerResponse response)
+    static void HandleClient(TcpClient client, string root)
     {
-        if (request.Url == null)
+        try
         {
-            return false;
-        }
+            NetworkStream stream = client.GetStream();
+            byte[] buffer = new byte[4096];
+            int bytesRead = stream.Read(buffer, 0, buffer.Length);
+            
+            if (bytesRead == 0)
+            {
+                client.Close();
+                return;
+            }
 
-        string localPath = request.Url.LocalPath;
-        if (string.IsNullOrEmpty(localPath) || localPath == "/")
+            string request = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            Console.WriteLine($"Received request:\n{request}");
+
+            string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
+            string httpResponse = $"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {Encoding.UTF8.GetByteCount(responseString)}\r\n\r\n{responseString}";
+            byte[] responseBytes = Encoding.UTF8.GetBytes(httpResponse);
+            stream.Write(responseBytes, 0, responseBytes.Length);
+            stream.Close();
+            client.Close();
+        }
+        catch (Exception ex)
         {
-            localPath = "/index.html";
+            Console.WriteLine($"Error handling client: {ex.Message}");
+            client.Close();
         }
-
-        string relativePath = localPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        string fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
-
-        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-        {
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return true;
-        }
-
-        if (!File.Exists(fullPath))
-        {
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return true;
-        }
-
-        byte[] buffer = File.ReadAllBytes(fullPath);
-        response.ContentLength64 = buffer.Length;
-        response.ContentType = GetContentType(fullPath);
-        response.OutputStream.Write(buffer, 0, buffer.Length);
-        return true;
     }
 
     static readonly Dictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -132,9 +93,13 @@ class Program
 
     static string GetContentType(string path)
     {
-        string extension = Path.GetExtension(path) ?? string.Empty;
+        string? extension = Path.GetExtension(path);
+        if (string.IsNullOrEmpty(extension))
+        {
+            return "application/octet-stream";
+        }
 
-        if (ContentTypes.TryGetValue(extension, out string value))
+        if (ContentTypes.TryGetValue(extension, out string? value) && value != null)
         {
             return value;
         }
