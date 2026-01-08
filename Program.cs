@@ -124,14 +124,51 @@ class Server
 
     private void ProcessRequest(HttpRequest request, NetworkStream stream)
     {
-        string responseBody = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
-        Dictionary<string, string> responseHeaders = new Dictionary<string, string>
+        if (request.Method != "GET")
         {
-            ["Content-Type"] = "text/html",
-            ["Content-Length"] = Encoding.UTF8.GetByteCount(responseBody).ToString()
-        };
+            SendErrorResponse(stream, 405, "Method Not Allowed");
+            return;
+        }
 
-        SendResponse(stream, 200, "OK", responseHeaders, responseBody);
+        string localPath = request.Path;
+        if (string.IsNullOrEmpty(localPath) || localPath == "/")
+        {
+            localPath = "/index.html";
+        }
+
+        string relativePath = localPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        string fullPath = Path.GetFullPath(Path.Combine(rootDirectory, relativePath));
+
+        if (!fullPath.StartsWith(Path.GetFullPath(rootDirectory), StringComparison.OrdinalIgnoreCase))
+        {
+            SendErrorResponse(stream, 403, "Forbidden");
+            return;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            SendErrorResponse(stream, 404, "Not Found");
+            return;
+        }
+
+        try
+        {
+            byte[] fileBytes = File.ReadAllBytes(fullPath);
+            string contentType = GetContentType(fullPath);
+
+            Dictionary<string, string> responseHeaders = new Dictionary<string, string>
+            {
+                ["Content-Type"] = contentType,
+                ["Content-Length"] = fileBytes.Length.ToString()
+            };
+
+            SendResponse(stream, 200, "OK", responseHeaders, fileBytes);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading file: {ex.Message}");
+            SendErrorResponse(stream, 500, "Internal Server Error");
+        }
     }
 
     private static HttpRequest? ParseRequest(string requestText)
@@ -176,6 +213,12 @@ class Server
 
     private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body)
     {
+        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+        SendResponse(stream, statusCode, statusMessage, headers, bodyBytes);
+    }
+
+    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, byte[] body)
+    {
         StringBuilder responseBuilder = new StringBuilder();
         responseBuilder.Append($"HTTP/1.1 {statusCode} {statusMessage}\r\n");
 
@@ -185,11 +228,11 @@ class Server
         }
 
         responseBuilder.Append("\r\n");
-        responseBuilder.Append(body);
+        string responseHeaders = responseBuilder.ToString();
+        byte[] headerBytes = Encoding.UTF8.GetBytes(responseHeaders);
 
-        string response = responseBuilder.ToString();
-        byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-        stream.Write(responseBytes, 0, responseBytes.Length);
+        stream.Write(headerBytes, 0, headerBytes.Length);
+        stream.Write(body, 0, body.Length);
     }
 
     private static void SendErrorResponse(NetworkStream stream, int statusCode, string statusMessage)
