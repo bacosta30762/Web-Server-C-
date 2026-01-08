@@ -16,6 +16,8 @@ class Program
             HttpListenerRequest request = context.Request;
             HttpListenerResponse response = context.Response;
 
+            Console.WriteLine($"{DateTime.Now}: Received request for {request.Url}");
+
             string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
             byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
             response.ContentLength64 = buffer.Length;
