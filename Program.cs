@@ -82,10 +82,14 @@ class Program
 
             Console.WriteLine($"{DateTime.Now}: {httpRequest.Method} {httpRequest.Path}");
 
-            string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
-            string httpResponse = $"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {Encoding.UTF8.GetByteCount(responseString)}\r\n\r\n{responseString}";
-            byte[] responseBytes = Encoding.UTF8.GetBytes(httpResponse);
-            stream.Write(responseBytes, 0, responseBytes.Length);
+            string responseBody = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
+            Dictionary<string, string> responseHeaders = new Dictionary<string, string>
+            {
+                ["Content-Type"] = "text/html",
+                ["Content-Length"] = Encoding.UTF8.GetByteCount(responseBody).ToString()
+            };
+
+            SendResponse(stream, 200, "OK", responseHeaders, responseBody);
             stream.Close();
             client.Close();
         }
@@ -150,12 +154,33 @@ class Program
         return request;
     }
 
+    static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body)
+    {
+        StringBuilder responseBuilder = new StringBuilder();
+        responseBuilder.Append($"HTTP/1.1 {statusCode} {statusMessage}\r\n");
+
+        foreach (var header in headers)
+        {
+            responseBuilder.Append($"{header.Key}: {header.Value}\r\n");
+        }
+
+        responseBuilder.Append("\r\n");
+        responseBuilder.Append(body);
+
+        string response = responseBuilder.ToString();
+        byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+        stream.Write(responseBytes, 0, responseBytes.Length);
+    }
+
     static void SendErrorResponse(NetworkStream stream, int statusCode, string statusMessage)
     {
         string body = $"<html><body><h1>{statusCode} - {statusMessage}</h1></body></html>";
-        string response = $"HTTP/1.1 {statusCode} {statusMessage}\r\nContent-Type: text/html\r\nContent-Length: {Encoding.UTF8.GetByteCount(body)}\r\n\r\n{body}";
-        byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-        stream.Write(responseBytes, 0, responseBytes.Length);
+        Dictionary<string, string> headers = new Dictionary<string, string>
+        {
+            ["Content-Type"] = "text/html",
+            ["Content-Length"] = Encoding.UTF8.GetByteCount(body).ToString()
+        };
+        SendResponse(stream, statusCode, statusMessage, headers, body);
     }
 
     static string GetContentType(string path)
