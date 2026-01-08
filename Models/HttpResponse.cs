@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace WebServer.Models
@@ -6,7 +7,7 @@ namespace WebServer.Models
     {
         public int StatusCode { get; set; } = 200;
         public string StatusMessage { get; set; } = "OK";
-        public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public List<string> Cookies { get; set; } = new List<string>();
         public byte[] Body { get; set; } = Array.Empty<byte>();
 
