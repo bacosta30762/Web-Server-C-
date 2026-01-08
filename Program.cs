@@ -38,12 +38,18 @@ class Program
 
     static bool TryServeFile(string root, HttpListenerRequest request, HttpListenerResponse response)
     {
-        if (request.Url == null || request.Url.LocalPath == "/")
+        if (request.Url == null)
         {
             return false;
         }
 
-        string relativePath = request.Url.LocalPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        string localPath = request.Url.LocalPath;
+        if (string.IsNullOrEmpty(localPath) || localPath == "/")
+        {
+            localPath = "/index.html";
+        }
+
+        string relativePath = localPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
         string fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
 
         if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
