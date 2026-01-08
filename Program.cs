@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 
@@ -66,9 +67,39 @@ class Program
 
         byte[] buffer = File.ReadAllBytes(fullPath);
         response.ContentLength64 = buffer.Length;
-        response.ContentType = "text/html";
+        response.ContentType = GetContentType(fullPath);
         response.OutputStream.Write(buffer, 0, buffer.Length);
         return true;
+    }
+
+    static readonly Dictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        [".html"] = "text/html",
+        [".htm"] = "text/html",
+        [".css"] = "text/css",
+        [".js"] = "application/javascript",
+        [".png"] = "image/png",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".gif"] = "image/gif",
+        [".ico"] = "image/x-icon",
+        [".txt"] = "text/plain"
+    };
+
+    static string GetContentType(string path)
+    {
+        string? extension = Path.GetExtension(path);
+        if (string.IsNullOrEmpty(extension))
+        {
+            return "application/octet-stream";
+        }
+
+        if (ContentTypes.TryGetValue(extension!, out string value))
+        {
+            return value;
+        }
+
+        return "application/octet-stream";
     }
 }
 
