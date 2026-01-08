@@ -14,23 +14,45 @@ class HttpRequest
     public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
-class Program
+class Server
 {
-    static bool running = true;
+    private readonly string rootDirectory;
+    private readonly int port;
+    private TcpListener? listener;
+    private bool running;
 
-    static void Main(string[] args)
+    private static readonly Dictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        string root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        [".html"] = "text/html",
+        [".htm"] = "text/html",
+        [".css"] = "text/css",
+        [".js"] = "application/javascript",
+        [".png"] = "image/png",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".gif"] = "image/gif",
+        [".ico"] = "image/x-icon",
+        [".txt"] = "text/plain"
+    };
 
-        TcpListener listener = new TcpListener(IPAddress.Any, 8080);
+    public Server(string rootDirectory, int port = 8080)
+    {
+        this.rootDirectory = rootDirectory;
+        this.port = port;
+        this.running = false;
+    }
+
+    public void Start()
+    {
+        listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
-        Console.WriteLine("Listening for connections on port 8080...");
+        running = true;
+        Console.WriteLine($"Listening for connections on port {port}...");
 
         Console.CancelKeyPress += (sender, eventArgs) =>
         {
             eventArgs.Cancel = true;
-            running = false;
-            listener.Stop();
+            Stop();
         };
 
         while (running)
@@ -40,7 +62,7 @@ class Program
                 TcpClient client = listener.AcceptTcpClient();
                 Console.WriteLine($"{DateTime.Now}: Client connected from {client.Client.RemoteEndPoint}");
 
-                ThreadPool.QueueUserWorkItem(state => HandleClient(client, root));
+                ThreadPool.QueueUserWorkItem(state => HandleClient(client));
             }
             catch (SocketException)
             {
@@ -55,7 +77,13 @@ class Program
         listener.Stop();
     }
 
-    static void HandleClient(TcpClient client, string root)
+    public void Stop()
+    {
+        running = false;
+        listener?.Stop();
+    }
+
+    private void HandleClient(TcpClient client)
     {
         try
         {
@@ -83,14 +111,7 @@ class Program
 
             Console.WriteLine($"{DateTime.Now}: {httpRequest.Method} {httpRequest.Path}");
 
-            string responseBody = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
-            Dictionary<string, string> responseHeaders = new Dictionary<string, string>
-            {
-                ["Content-Type"] = "text/html",
-                ["Content-Length"] = Encoding.UTF8.GetByteCount(responseBody).ToString()
-            };
-
-            SendResponse(stream, 200, "OK", responseHeaders, responseBody);
+            ProcessRequest(httpRequest, stream);
             stream.Close();
             client.Close();
         }
@@ -101,21 +122,19 @@ class Program
         }
     }
 
-    static readonly Dictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    private void ProcessRequest(HttpRequest request, NetworkStream stream)
     {
-        [".html"] = "text/html",
-        [".htm"] = "text/html",
-        [".css"] = "text/css",
-        [".js"] = "application/javascript",
-        [".png"] = "image/png",
-        [".jpg"] = "image/jpeg",
-        [".jpeg"] = "image/jpeg",
-        [".gif"] = "image/gif",
-        [".ico"] = "image/x-icon",
-        [".txt"] = "text/plain"
-    };
+        string responseBody = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
+        Dictionary<string, string> responseHeaders = new Dictionary<string, string>
+        {
+            ["Content-Type"] = "text/html",
+            ["Content-Length"] = Encoding.UTF8.GetByteCount(responseBody).ToString()
+        };
 
-    static HttpRequest? ParseRequest(string requestText)
+        SendResponse(stream, 200, "OK", responseHeaders, responseBody);
+    }
+
+    private static HttpRequest? ParseRequest(string requestText)
     {
         string[] lines = requestText.Split(new[] { "\r\n" }, StringSplitOptions.None);
         if (lines.Length == 0)
@@ -155,7 +174,7 @@ class Program
         return request;
     }
 
-    static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body)
+    private static void SendResponse(NetworkStream stream, int statusCode, string statusMessage, Dictionary<string, string> headers, string body)
     {
         StringBuilder responseBuilder = new StringBuilder();
         responseBuilder.Append($"HTTP/1.1 {statusCode} {statusMessage}\r\n");
@@ -173,7 +192,7 @@ class Program
         stream.Write(responseBytes, 0, responseBytes.Length);
     }
 
-    static void SendErrorResponse(NetworkStream stream, int statusCode, string statusMessage)
+    private static void SendErrorResponse(NetworkStream stream, int statusCode, string statusMessage)
     {
         string body = $"<html><body><h1>{statusCode} - {statusMessage}</h1></body></html>";
         Dictionary<string, string> headers = new Dictionary<string, string>
@@ -184,7 +203,7 @@ class Program
         SendResponse(stream, statusCode, statusMessage, headers, body);
     }
 
-    static string GetContentType(string path)
+    private static string GetContentType(string path)
     {
         string? extension = Path.GetExtension(path);
         if (string.IsNullOrEmpty(extension))
@@ -198,6 +217,16 @@ class Program
         }
 
         return "application/octet-stream";
+    }
+}
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        Server server = new Server(root, 8080);
+        server.Start();
     }
 }
 
