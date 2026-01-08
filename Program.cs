@@ -5,6 +5,8 @@ using System.Net;
 
 class Program
 {
+    static bool running = true;
+
     static void Main(string[] args)
     {
         string root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -14,27 +16,69 @@ class Program
         listener.Start();
         Console.WriteLine("Listening for connections on http://localhost:8080/");
 
-        while (true)
+        Console.CancelKeyPress += (sender, eventArgs) =>
         {
-            HttpListenerContext context = listener.GetContext();
+            eventArgs.Cancel = true;
+            running = false;
+            listener.Stop();
+        };
+
+        while (running)
+        {
+            HttpListenerContext? context = null;
+
+            try
+            {
+                context = listener.GetContext();
+            }
+            catch (HttpListenerException)
+            {
+                if (!running)
+                {
+                    break;
+                }
+
+                throw;
+            }
+
             HttpListenerRequest request = context.Request;
             HttpListenerResponse response = context.Response;
 
             Console.WriteLine($"{DateTime.Now}: Received request for {request.Url}");
 
-            if (TryServeFile(root, request, response))
+            try
             {
-                response.OutputStream.Close();
-                continue;
-            }
+                if (TryServeFile(root, request, response))
+                {
+                    response.OutputStream.Close();
+                    continue;
+                }
 
-            string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
-            byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
-            response.ContentLength64 = buffer.Length;
-            Stream output = response.OutputStream;
-            output.Write(buffer, 0, buffer.Length);
-            output.Close();
+                string responseString = "<html><body><h1>Welcome to the Simple Web Server</h1></body></html>";
+                byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
+                response.ContentLength64 = buffer.Length;
+                Stream output = response.OutputStream;
+                output.Write(buffer, 0, buffer.Length);
+                output.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling request: {ex.Message}");
+
+                if (!response.OutputStream.CanWrite)
+                {
+                    continue;
+                }
+
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                byte[] buffer = System.Text.Encoding.UTF8.GetBytes("<html><body><h1>500 - Internal Server Error</h1></body></html>");
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+                response.OutputStream.Close();
+            }
         }
+
+        listener.Close();
     }
 
     static bool TryServeFile(string root, HttpListenerRequest request, HttpListenerResponse response)
@@ -88,13 +132,9 @@ class Program
 
     static string GetContentType(string path)
     {
-        string? extension = Path.GetExtension(path);
-        if (string.IsNullOrEmpty(extension))
-        {
-            return "application/octet-stream";
-        }
+        string extension = Path.GetExtension(path) ?? string.Empty;
 
-        if (ContentTypes.TryGetValue(extension!, out string value))
+        if (ContentTypes.TryGetValue(extension, out string value))
         {
             return value;
         }
