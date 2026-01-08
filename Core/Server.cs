@@ -21,46 +21,74 @@ namespace WebServer.Core
 
         public Server(string rootDirectory, int port = 8080)
         {
-            this.rootDirectory = rootDirectory;
+            if (string.IsNullOrWhiteSpace(rootDirectory))
+            {
+                throw new ArgumentException("Root directory cannot be null or empty", nameof(rootDirectory));
+            }
+
+            if (!Directory.Exists(rootDirectory))
+            {
+                throw new DirectoryNotFoundException($"Root directory does not exist: {rootDirectory}");
+            }
+
+            if (port < 1 || port > 65535)
+            {
+                throw new ArgumentOutOfRangeException(nameof(port), "Port must be between 1 and 65535");
+            }
+
+            this.rootDirectory = Path.GetFullPath(rootDirectory);
             this.port = port;
             this.running = false;
             this.sessionManager = new SessionManager();
-            this.requestHandler = new RequestHandler(rootDirectory, sessionManager);
+            this.requestHandler = new RequestHandler(this.rootDirectory, sessionManager);
         }
 
         public void Start()
         {
-            listener = new TcpListener(IPAddress.Any, port);
-            listener.Start();
-            running = true;
-            Console.WriteLine($"Listening for connections on port {port}...");
-
-            Console.CancelKeyPress += (sender, eventArgs) =>
+            if (running)
             {
-                eventArgs.Cancel = true;
-                Stop();
-            };
+                throw new InvalidOperationException("Server is already running");
+            }
 
-            while (running)
+            try
             {
-                try
-                {
-                    TcpClient client = listener.AcceptTcpClient();
-                    Console.WriteLine($"{DateTime.Now}: Client connected from {client.Client.RemoteEndPoint}");
+                listener = new TcpListener(IPAddress.Any, port);
+                listener.Start();
+                running = true;
+                Console.WriteLine($"Listening for connections on port {port}...");
 
-                    ThreadPool.QueueUserWorkItem(state => HandleClient(client));
-                }
-                catch (SocketException)
+                Console.CancelKeyPress += (sender, eventArgs) =>
                 {
-                    if (!running)
+                    eventArgs.Cancel = true;
+                    Stop();
+                };
+
+                while (running)
+                {
+                    try
+                    {
+                        TcpClient client = listener.AcceptTcpClient();
+                        if (client != null && client.Connected)
+                        {
+                            Console.WriteLine($"{DateTime.Now}: Client connected from {client.Client.RemoteEndPoint}");
+                            ThreadPool.QueueUserWorkItem(state => HandleClient(client));
+                        }
+                    }
+                    catch (SocketException ex) when (!running)
                     {
                         break;
                     }
-                    throw;
+                    catch (SocketException ex)
+                    {
+                        Console.WriteLine($"Socket error: {ex.Message}");
+                        throw;
+                    }
                 }
             }
-
-            listener.Stop();
+            finally
+            {
+                listener?.Stop();
+            }
         }
 
         public void Stop()
@@ -71,15 +99,31 @@ namespace WebServer.Core
 
         private void HandleClient(TcpClient client)
         {
+            if (client == null || !client.Connected)
+            {
+                return;
+            }
+
+            NetworkStream? stream = null;
             try
             {
-                NetworkStream stream = client.GetStream();
+                stream = client.GetStream();
+                if (stream == null || !stream.CanRead)
+                {
+                    return;
+                }
+
                 byte[] buffer = new byte[4096];
                 int bytesRead = stream.Read(buffer, 0, buffer.Length);
 
                 if (bytesRead == 0)
                 {
-                    client.Close();
+                    return;
+                }
+
+                if (bytesRead > 8192)
+                {
+                    HttpResponseBuilder.SendErrorResponse(stream, 413, "Request Entity Too Large");
                     return;
                 }
 
@@ -90,8 +134,6 @@ namespace WebServer.Core
                 if (httpRequest == null)
                 {
                     HttpResponseBuilder.SendErrorResponse(stream, 400, "Bad Request");
-                    stream.Close();
-                    client.Close();
                     return;
                 }
 
@@ -99,6 +141,7 @@ namespace WebServer.Core
 
                 if (!string.IsNullOrEmpty(httpRequest.Body) &&
                     httpRequest.Headers.TryGetValue("Content-Type", out string? contentType) &&
+                    !string.IsNullOrEmpty(contentType) &&
                     contentType.Contains("application/x-www-form-urlencoded"))
                 {
                     HttpParser.ParseFormData(httpRequest);
@@ -107,13 +150,35 @@ namespace WebServer.Core
                 Console.WriteLine($"{DateTime.Now}: {httpRequest.Method} {httpRequest.Path}");
 
                 requestHandler.HandleRequest(httpRequest, stream);
-                stream.Close();
-                client.Close();
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"IO error handling client: {ex.Message}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error handling client: {ex.Message}");
-                client.Close();
+                try
+                {
+                    if (stream != null && stream.CanWrite)
+                    {
+                        HttpResponseBuilder.SendErrorResponse(stream, 500, "Internal Server Error");
+                    }
+                }
+                catch
+                {
+                }
+            }
+            finally
+            {
+                try
+                {
+                    stream?.Close();
+                    client?.Close();
+                }
+                catch
+                {
+                }
             }
         }
 
@@ -122,6 +187,12 @@ namespace WebServer.Core
             if (httpRequest.Headers.TryGetValue("Content-Length", out string? contentLengthStr) &&
                 int.TryParse(contentLengthStr, out int contentLength) && contentLength > 0)
             {
+                const int maxBodySize = 10 * 1024 * 1024;
+                if (contentLength > maxBodySize)
+                {
+                    throw new InvalidOperationException($"Request body too large: {contentLength} bytes");
+                }
+
                 int bodyStart = Encoding.UTF8.GetString(buffer, 0, bytesRead).IndexOf("\r\n\r\n");
                 if (bodyStart >= 0)
                 {
@@ -134,13 +205,26 @@ namespace WebServer.Core
                         Array.Copy(buffer, headerLength, bodyBuffer, 0, bodyBytesRead);
 
                         int remaining = contentLength - bodyBytesRead;
-                        while (remaining > 0)
+                        int timeout = 0;
+                        const int maxTimeout = 30;
+                        while (remaining > 0 && timeout < maxTimeout)
                         {
                             int read = stream.Read(buffer, 0, Math.Min(buffer.Length, remaining));
-                            if (read == 0) break;
+                            if (read == 0)
+                            {
+                                timeout++;
+                                Thread.Sleep(100);
+                                continue;
+                            }
                             Array.Copy(buffer, 0, bodyBuffer, bodyBytesRead, read);
                             bodyBytesRead += read;
                             remaining -= read;
+                            timeout = 0;
+                        }
+
+                        if (remaining > 0)
+                        {
+                            throw new TimeoutException("Timeout reading request body");
                         }
 
                         httpRequest.Body = Encoding.UTF8.GetString(bodyBuffer, 0, contentLength);

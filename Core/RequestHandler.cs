@@ -26,6 +26,17 @@ namespace WebServer.Core
 
         public void HandleRequest(HttpRequest request, NetworkStream stream)
         {
+            if (request == null)
+            {
+                HttpResponseBuilder.SendErrorResponse(stream, 400, "Bad Request");
+                return;
+            }
+
+            if (stream == null || !stream.CanWrite)
+            {
+                return;
+            }
+
             try
             {
                 if (request.Method != "GET" && request.Method != "POST")
@@ -36,7 +47,7 @@ namespace WebServer.Core
 
                 IncrementRequestCount();
 
-                string localPath = request.Path;
+                string localPath = request.Path ?? string.Empty;
 
                 if (localPath.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
                 {
@@ -81,8 +92,17 @@ namespace WebServer.Core
 
         private void ServeFile(string fullPath, NetworkStream stream)
         {
+            const long maxFileSize = 100 * 1024 * 1024;
+
             try
             {
+                FileInfo fileInfo = new FileInfo(fullPath);
+                if (fileInfo.Length > maxFileSize)
+                {
+                    HttpResponseBuilder.SendErrorResponse(stream, 413, "File Too Large");
+                    return;
+                }
+
                 byte[] fileBytes = File.ReadAllBytes(fullPath);
                 string contentType = MimeTypeHelper.GetContentType(fullPath);
 
@@ -96,6 +116,14 @@ namespace WebServer.Core
                 response.Body = fileBytes;
 
                 HttpResponseBuilder.SendResponse(stream, response);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                HttpResponseBuilder.SendErrorResponse(stream, 403, "Forbidden");
+            }
+            catch (FileNotFoundException)
+            {
+                HttpResponseBuilder.SendErrorResponse(stream, 404, "Not Found");
             }
             catch (Exception ex)
             {
