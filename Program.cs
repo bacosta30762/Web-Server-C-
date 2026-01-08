@@ -12,6 +12,8 @@ class HttpRequest
     public string Path { get; set; } = string.Empty;
     public string Version { get; set; } = string.Empty;
     public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public string Body { get; set; } = string.Empty;
+    public Dictionary<string, string> FormData { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 class Server
@@ -117,6 +119,46 @@ class Server
                 return;
             }
 
+            if (httpRequest.Headers.TryGetValue("Content-Length", out string? contentLengthStr) && 
+                int.TryParse(contentLengthStr, out int contentLength) && contentLength > 0)
+            {
+                int bodyStart = requestText.IndexOf("\r\n\r\n");
+                if (bodyStart >= 0)
+                {
+                    int headerLength = bodyStart + 4;
+                    int bodyBytesRead = bytesRead - headerLength;
+                    
+                    if (bodyBytesRead < contentLength)
+                    {
+                        byte[] bodyBuffer = new byte[contentLength];
+                        Array.Copy(buffer, headerLength, bodyBuffer, 0, bodyBytesRead);
+                        
+                        int remaining = contentLength - bodyBytesRead;
+                        while (remaining > 0)
+                        {
+                            int read = stream.Read(buffer, 0, Math.Min(buffer.Length, remaining));
+                            if (read == 0) break;
+                            Array.Copy(buffer, 0, bodyBuffer, bodyBytesRead, read);
+                            bodyBytesRead += read;
+                            remaining -= read;
+                        }
+                        
+                        httpRequest.Body = Encoding.UTF8.GetString(bodyBuffer, 0, contentLength);
+                    }
+                    else
+                    {
+                        httpRequest.Body = Encoding.UTF8.GetString(buffer, headerLength, bodyBytesRead);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(httpRequest.Body) && 
+                httpRequest.Headers.TryGetValue("Content-Type", out string? contentType) &&
+                contentType.Contains("application/x-www-form-urlencoded"))
+            {
+                ParseFormData(httpRequest);
+            }
+
             Console.WriteLine($"{DateTime.Now}: {httpRequest.Method} {httpRequest.Path}");
             
             lock (statsLock)
@@ -135,9 +177,24 @@ class Server
         }
     }
 
+    private static void ParseFormData(HttpRequest request)
+    {
+        string[] pairs = request.Body.Split('&');
+        foreach (string pair in pairs)
+        {
+            int equalsIndex = pair.IndexOf('=');
+            if (equalsIndex > 0)
+            {
+                string key = Uri.UnescapeDataString(pair.Substring(0, equalsIndex));
+                string value = Uri.UnescapeDataString(pair.Substring(equalsIndex + 1));
+                request.FormData[key] = value;
+            }
+        }
+    }
+
     private void ProcessRequest(HttpRequest request, NetworkStream stream)
     {
-        if (request.Method != "GET")
+        if (request.Method != "GET" && request.Method != "POST")
         {
             SendErrorResponse(stream, 405, "Method Not Allowed");
             return;
