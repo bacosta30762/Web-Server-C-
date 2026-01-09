@@ -18,6 +18,7 @@ namespace WebServer.Core
         private bool running;
         private readonly RequestHandler requestHandler;
         private readonly SessionManager sessionManager;
+        private readonly AuthenticationService authService;
 
         public Server(string rootDirectory, int port = 8080)
         {
@@ -40,7 +41,8 @@ namespace WebServer.Core
             this.port = port;
             this.running = false;
             this.sessionManager = new SessionManager();
-            this.requestHandler = new RequestHandler(this.rootDirectory, sessionManager);
+            this.authService = new AuthenticationService();
+            this.requestHandler = new RequestHandler(this.rootDirectory, sessionManager, authService);
         }
 
         public void Start()
