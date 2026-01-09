@@ -159,6 +159,10 @@ namespace WebServer.Core
             {
                 HandleStatsRequest(stream);
             }
+            else if (path.Equals("/api/user", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleUserRequest(request, stream);
+            }
             else if (path.Equals("/api/files", StringComparison.OrdinalIgnoreCase) || 
                      path.StartsWith("/api/files/", StringComparison.OrdinalIgnoreCase))
             {
@@ -168,6 +172,44 @@ namespace WebServer.Core
             {
                 HttpResponseBuilder.SendErrorResponse(stream, 404, "API Endpoint Not Found");
             }
+        }
+
+        private void HandleUserRequest(HttpRequest request, NetworkStream stream)
+        {
+            Session? session = GetSessionFromRequest(request);
+            
+            HttpResponse response = new HttpResponse
+            {
+                StatusCode = 200,
+                StatusMessage = "OK"
+            };
+            response.SetHeader("Content-Type", "application/json");
+
+            if (session != null && !session.IsExpired)
+            {
+                string json = $@"{{
+    ""authenticated"": true,
+    ""username"": ""{session.Username.Replace("\"", "\\\"")}"",
+    ""sessionId"": ""{session.SessionId}"",
+    ""createdAt"": ""{session.CreatedAt:yyyy-MM-dd HH:mm:ss}"",
+    ""lastAccessed"": ""{session.LastAccessed:yyyy-MM-dd HH:mm:ss}""
+}}";
+                byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+                response.Body = jsonBytes;
+                response.SetHeader("Content-Length", jsonBytes.Length.ToString());
+            }
+            else
+            {
+                string json = @"{
+    ""authenticated"": false,
+    ""username"": null
+}";
+                byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+                response.Body = jsonBytes;
+                response.SetHeader("Content-Length", jsonBytes.Length.ToString());
+            }
+
+            HttpResponseBuilder.SendResponse(stream, response);
         }
 
         private void HandleStatsRequest(NetworkStream stream)

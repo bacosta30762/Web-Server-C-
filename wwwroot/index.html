@@ -9,8 +9,21 @@
 <body>
     <div class="container">
         <header>
-            <h1>🚀 Web Server</h1>
-            <p class="subtitle">A simple and powerful HTTP server built with C#</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div>
+                    <h1>🚀 Web Server</h1>
+                    <p class="subtitle">A simple and powerful HTTP server built with C#</p>
+                </div>
+                <div id="userInfo" style="text-align: right;">
+                    <div id="userDisplay" style="margin-bottom: 10px; display: none;">
+                        <span style="color: #667eea; font-weight: 600;">👤 Logged in as: </span>
+                        <span id="username" style="color: #333; font-weight: 600;"></span>
+                    </div>
+                    <button id="logoutBtn" onclick="handleLogout()" style="display: none; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.3s;">
+                        🚪 Logout
+                    </button>
+                </div>
+            </div>
         </header>
 
         <div class="stats-grid" id="statsGrid">
@@ -118,15 +131,43 @@
             }
         }
 
+        async function loadUserInfo() {
+            try {
+                const response = await fetch('/api/user');
+                const data = await response.json();
+                
+                if (data.authenticated && data.username) {
+                    document.getElementById('username').textContent = data.username;
+                    document.getElementById('userDisplay').style.display = 'block';
+                    document.getElementById('logoutBtn').style.display = 'inline-block';
+                } else {
+                    document.getElementById('userDisplay').style.display = 'none';
+                    document.getElementById('logoutBtn').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Failed to load user info:', error);
+                document.getElementById('userDisplay').style.display = 'none';
+                document.getElementById('logoutBtn').style.display = 'none';
+            }
+        }
+
+        function handleLogout() {
+            if (confirm('Are you sure you want to logout?')) {
+                window.location.href = '/logout';
+            }
+        }
+
         function refreshStats() {
             loadStats();
         }
 
-        // Load stats on page load
+        // Load stats and user info on page load
         loadStats();
+        loadUserInfo();
 
         // Auto-refresh every 5 seconds
         setInterval(loadStats, 5000);
+        setInterval(loadUserInfo, 5000);
     </script>
 </body>
 </html>
